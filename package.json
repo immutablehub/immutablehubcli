@@ -1,0 +1,21 @@
+{
+  "name": "ihub-cli",
+  "version": "1.0.0",
+  "description": "immutablehub cli to push and clone repos",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js"
+  },
+  "bin": {
+    "ihub": "./index.js"
+  },
+  "author": "immutablehub",
+  "license": "ISC",
+  "dependencies": {
+    "jest": "^30.2.0",
+    "mongodb": "^7.0.0",
+    "pinata": "^2.5.1",
+    "yargs": "^18.0.0"
+  }
+}
