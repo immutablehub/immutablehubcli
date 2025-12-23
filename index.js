@@ -139,21 +139,29 @@ async function getFile(folder,cid,pinata) {
     const arrayBuffer = await Data.arrayBuffer()
     const buffer = Buffer.from(arrayBuffer);
     console.log(buffer)
+
+   
+
+    //tester
+    deleteFilesWithExtension(".history.bundle",".")
+
+
     let dynamicstring=crypto.randomUUID()
     let shortID = dynamicstring.substring(0, 5)
     let bpath=`${shortID}.history.bundle`
 
-     fs.writeFileSync(`${bpath}`,buffer);
+    fs.writeFileSync(`${bpath}`,buffer);
 
+    const absolutePath  = path.resolve(folder);
 
-     if (fs.existsSync(folder)){
-      fs.rmSync(folder, { recursive: true, force: true });
+     if (fs.existsSync(absolutePath)){
+      fs.rmSync(absolutePath, { recursive: true, force: true });
      }
 
 
-    fs.mkdirSync(folder, { recursive: true });
+    fs.mkdirSync(absolutePath, { recursive: true });
 
-    execSync(`git clone ${bpath} ${folder}`, {
+    execSync(`git clone ${bpath} ${absolutePath}`, {
       cwd: ".",
       stdio: 'inherit'
     });
@@ -178,7 +186,10 @@ async function  getFileNew(folder,obj,pinata) {
 
 function deleteFilesWithExtension(extension, folder) {
   try {
-    const files = fs.readdirSync(folder);
+
+
+    const absolutePath  = path.resolve(folder);
+    const files = fs.readdirSync(absolutePath);
 
     for (const file of files) {
       if (file.endsWith(extension)) {
@@ -319,7 +330,8 @@ async function Push(FOLDER_TO_UPLOAD,pinata,client) {
         const coll = db.collection("ihub_col");
 
         let uploads=[]
-        let files=dirtoFileArray(FOLDER_TO_UPLOAD)
+        const absolutePath = path.resolve(FOLDER_TO_UPLOAD);
+        let files=dirtoFileArray(absolutePath)
 
         for (let file of files) {
 
@@ -330,7 +342,7 @@ async function Push(FOLDER_TO_UPLOAD,pinata,client) {
 
         console.log(uploads)
         const data = fs.readFileSync(FILE_TO_STORE_LOGIN, 'utf8');
-        const lastpath = path.basename(FOLDER_TO_UPLOAD);
+        const lastpath = path.basename(absolutePath);
 
         let meta={"id":data,"folder":lastpath,"uploads":uploads,"is_latest":true}
 
@@ -354,6 +366,10 @@ async function Push(FOLDER_TO_UPLOAD,pinata,client) {
      }
 
 }
+
+
+
+
 
 
 yargs(hideBin(process.argv))
@@ -459,8 +475,3 @@ yargs(hideBin(process.argv))
   .epilog('ImmutableHub CLI • Built with ❤️')
   .help()
   .argv;
-
-
-
-
-
