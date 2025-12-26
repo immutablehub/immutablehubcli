@@ -16,6 +16,104 @@ const FILE_TO_STORE_LOGIN = path.join(IHUB_DIR, "login.txt");
 
 
 
+async function UpdateRepo(cid,pinata) {
+  
+  
+    const result = await pinata.gateways.public.get(cid)
+    const Data = result.data;
+    console.log(Data)
+    const arrayBuffer = await Data.arrayBuffer()
+    const buffer = Buffer.from(arrayBuffer);
+    console.log(buffer)
+    deleteFilesWithExtension(".history.bundle",".")
+    let dynamicstring=crypto.randomUUID()
+    let shortID = dynamicstring.substring(0, 5)
+    let bpath=`${shortID}.history.bundle`
+
+    fs.writeFileSync(`${bpath}`,buffer);
+
+    //const absolutePath  = path.resolve(folder);
+    const absoluteBundlePath = path.resolve(bpath);
+
+    execSync(`git fetch  ${absoluteBundlePath} refs/heads/*:refs/remotes/bundle/*`, {
+      cwd: `.`,
+      stdio: 'inherit'
+    });
+
+    const currentBranch = execSync(
+          `git branch --show-current`,
+      {
+        cwd: '.',
+        encoding: 'utf8',
+        shell: true
+      }
+      ).trim();
+
+  const bundleBranch = `bundle/${currentBranch}`;
+
+  console.log(`🔀 Merging ${bundleBranch} → ${currentBranch}`);
+  execSync(
+    `git merge ${bundleBranch} --allow-unrelated-histories --no-edit`,
+    {
+      cwd: '.',
+      stdio: 'inherit',
+      shell: true
+    }
+  );
+
+    console.log("pulled successfully")
+
+  }
+
+
+
+async function Pull(folder,pinata,client){
+
+    
+    const db = client.db("ihub_db");
+    const coll = db.collection("ihub_col");
+    const targetManifestId= fs.readFileSync(FILE_TO_STORE_LOGIN,'utf8');
+    const doc = await coll.findOne({
+        "owner": "system",
+        "manifests.id": targetManifestId 
+    });
+    if(doc) {
+
+        let uploads=null
+        let bundle=null
+        let manifests=doc.manifests
+    
+
+    for(let obj of  manifests){
+        
+        let dbfolder=String(obj.folder)
+
+          if(obj.id==targetManifestId && dbfolder==folder){
+              console.log(obj.folder)
+              uploads=obj.uploads
+           }
+
+    
+
+        }
+        console.log(uploads)
+  
+    for(let obj of uploads){
+
+        let name=obj.name
+        const isIncluded = name.includes(".history.bundle");
+        if(isIncluded) {
+
+                bundle=obj.cid
+
+          }}
+       
+          await UpdateRepo(bundle,pinata)
+    
+    }}
+
+
+
 async function getcreds() {
 
   let request=await fetch("https://immutablehub-creds.hf.space/creds",{
@@ -42,7 +140,6 @@ async function getRuntime() {
 
 
 function setUp(wallet) {
-
 
 
      if (!fs.existsSync(IHUB_DIR)) {
@@ -124,10 +221,6 @@ async function manifestExists(targetManifestId, foldername,client) {
   );
   return !!doc;
 }
-
-
-
-
 
 
 
@@ -406,15 +499,40 @@ yargs(hideBin(process.argv))
             const { pinata, client } = await getRuntime();
             try{
 
-
               console.log(`\n⬆️ Starting PUSH operation on folder: ${argv.folderpath}`);
-             
               gitBundler(argv.folderpath);
               await Push(argv.folderpath,pinata,client);
               console.log('Push operation finished.');
 
             }catch(e){
-              console.log(str(e))
+              console.log(String(e))
+            }finally{
+              await client.close()
+            }
+
+
+          }
+        )
+         .command(
+          'pull <foldername>', 
+          'Pulls the uploaded history into an existing project',
+          (yargs) => {
+            return yargs.positional('foldername', {
+                describe: 'the repo/folder to pull',
+                type: 'string'
+            });
+          },
+          async (argv) => {
+
+            const { pinata, client } = await getRuntime();
+            try{
+
+              console.log(`\n⬆️ Starting Pull operation`);
+              await Pull(argv.foldername,pinata,client)
+              
+
+            }catch(e){
+              console.log(String(e))
             }finally{
               await client.close()
             }
@@ -472,6 +590,12 @@ yargs(hideBin(process.argv))
   .example('ihub op push ./repo', 'Push a local repository')
   .example('ihub op clone <reponame> --new true', 'Clone a new repository | name will be the reponame in UI')
   .example('ihub op clone <reponame>', 'Clone an existing repository | name will be the reponame in UI')
+  .example('ihub op  pull <reponame>', 'Pul updates in an existing repository | name will be the reponame in UI')
   .epilog('ImmutableHub CLI • Built with ❤️')
   .help()
   .argv;
+
+
+
+
+
