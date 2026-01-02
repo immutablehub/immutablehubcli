@@ -10,107 +10,12 @@ import dirtoFileArray from "./recursive_file_extractor.js"
 import { PinataSDK } from "pinata";
 import { provideClient }  from "./dbconnection.js"
 
+import pLimit from "p-limit";
+
 
 const IHUB_DIR = path.join(os.homedir(), ".ihub");
 const FILE_TO_STORE_LOGIN = path.join(IHUB_DIR, "login.txt");
 
-
-
-async function UpdateRepo(cid,pinata) {
-  
-  
-    const result = await pinata.gateways.public.get(cid)
-    const Data = result.data;
-    console.log(Data)
-    const arrayBuffer = await Data.arrayBuffer()
-    const buffer = Buffer.from(arrayBuffer);
-    console.log(buffer)
-    deleteFilesWithExtension(".history.bundle",".")
-    let dynamicstring=crypto.randomUUID()
-    let shortID = dynamicstring.substring(0, 5)
-    let bpath=`${shortID}.history.bundle`
-
-    fs.writeFileSync(`${bpath}`,buffer);
-
-    //const absolutePath  = path.resolve(folder);
-    const absoluteBundlePath = path.resolve(bpath);
-
-    execSync(`git fetch  ${absoluteBundlePath} refs/heads/*:refs/remotes/bundle/*`, {
-      cwd: `.`,
-      stdio: 'inherit'
-    });
-
-    const currentBranch = execSync(
-          `git branch --show-current`,
-      {
-        cwd: '.',
-        encoding: 'utf8',
-        shell: true
-      }
-      ).trim();
-
-  const bundleBranch = `bundle/${currentBranch}`;
-
-  console.log(`🔀 Merging ${bundleBranch} → ${currentBranch}`);
-  execSync(
-    `git merge ${bundleBranch} --allow-unrelated-histories --no-edit`,
-    {
-      cwd: '.',
-      stdio: 'inherit',
-      shell: true
-    }
-  );
-
-    console.log("pulled successfully")
-
-  }
-
-
-
-async function Pull(folder,pinata,client){
-
-    
-    const db = client.db("ihub_db");
-    const coll = db.collection("ihub_col");
-    const targetManifestId= fs.readFileSync(FILE_TO_STORE_LOGIN,'utf8');
-    const doc = await coll.findOne({
-        "owner": "system",
-        "manifests.id": targetManifestId 
-    });
-    if(doc) {
-
-        let uploads=null
-        let bundle=null
-        let manifests=doc.manifests
-    
-
-    for(let obj of  manifests){
-        
-        let dbfolder=String(obj.folder)
-
-          if(obj.id==targetManifestId && dbfolder==folder){
-              console.log(obj.folder)
-              uploads=obj.uploads
-           }
-
-    
-
-        }
-        console.log(uploads)
-  
-    for(let obj of uploads){
-
-        let name=obj.name
-        const isIncluded = name.includes(".history.bundle");
-        if(isIncluded) {
-
-                bundle=obj.cid
-
-          }}
-       
-          await UpdateRepo(bundle,pinata)
-    
-    }}
 
 
 
@@ -129,10 +34,14 @@ async function getcreds() {
 }
 
 async function getRuntime() {
+
   const { jwt, gateway } = await getcreds();
   const pinata = new PinataSDK({ pinataJwt: jwt, pinataGateway: gateway });
+
+ 
   const client = provideClient();
   return { pinata, client };
+  
 }
 
 
@@ -182,11 +91,28 @@ function fileWithExtensionExists(extension,folder) {
 
 
 
-  async function deleteManifest(targetManifestId, foldername,client) {
 
 
-  const db = client.db("ihub_db");
-  const coll = db.collection("ihub_col");
+  async function deleteManifest(targetManifestId, foldername,client,mpc,prompt) {
+
+
+
+
+  let db = client.db("ihub_db");
+  let coll = db.collection("ihub_col");
+
+  if (mcp ==true){
+
+      db = client.db("ihub_db");
+      coll = db.collection("mcp_registry");
+
+  }else if(prompt ==true){
+    
+      db = client.db("ihub_db");
+      coll = db.collection("prompt_comp");
+  }
+
+  
   await coll.updateOne(
     { owner: "system" },
     {
@@ -200,6 +126,60 @@ function fileWithExtensionExists(extension,folder) {
   );
   
 }
+
+
+
+
+//--------------------------------------------------------------------
+
+async function deactivateOlderVersions(targetId, targetFolder,mcp,prompt) {
+
+    let db = client.db("ihub_db");
+    let coll = db.collection("ihub_col");
+
+    if (mcp ==true){
+
+        db = client.db("ihub_db");
+        coll = db.collection("mcp_registry");
+
+    }else if(prompt ==true){
+            db = client.db("ihub_db");
+            coll = db.collection("prompt_comp");
+    }
+
+
+    try {
+        const filter = { 
+                "manifests": { 
+                $elemMatch: { id: targetId, folder: targetFolder } 
+            } 
+        };
+
+        const update = {
+            $set: { "manifests.$[elem].is_latest": false }
+        };
+        const options = {
+            arrayFilters: [
+            { 
+                "elem.id": targetId, 
+                "elem.folder": targetFolder 
+                }
+            ]
+        };
+
+        const result = await coll.updateMany(filter, update, options);
+    
+        console.log(`Matched ${result.matchedCount} docs and updated ${result.modifiedCount} manifests.`);
+        return result;
+    } catch (error) {
+        console.error("Global update failed:", error);
+  }
+}
+
+
+
+
+//-------------------------------------------------------------------------
 
 
 
@@ -269,6 +249,7 @@ async function  getFileNew(folder,obj,pinata) {
   const result = await pinata.gateways.public.get(obj.cid)
     const Data = result.data;
     
+    //fs.mkdirSync(folder, { recursive: true });
     const filePath = path.join(folder, obj.name);
     fs.writeFileSync(`${filePath}`,Data,"utf-8");
     console.log("successfully")
@@ -321,15 +302,29 @@ function gitBundler(FOLDER_TO_UPLOAD){
   }
 
 
-async function Clone(folder,pinata,client){
+async function Clone(folder,pinata,client,mcp,prompt){
 
     
-    const db = client.db("ihub_db");
-    const coll = db.collection("ihub_col");
+ 
+      let db = client.db("ihub_db");
+      let coll = db.collection("ihub_col");
+
+        if (mcp ==true){
+
+            db = client.db("ihub_db");
+            coll = db.collection("mcp_registry");
+
+        }
+        else if(prompt ==true){
+            db = client.db("ihub_db");
+            coll = db.collection("prompt_comp");
+        }
+
+
+
     const targetManifestId= fs.readFileSync(FILE_TO_STORE_LOGIN,'utf8');
     const doc = await coll.findOne({
         "owner": "system",
-        "manifests.id": targetManifestId 
     });
     if(doc) {
 
@@ -412,27 +407,46 @@ async function CloneNew(folder,pinata,client){
 
 
 
-
-
-async function Push(FOLDER_TO_UPLOAD,pinata,client) {
+async function Push(FOLDER_TO_UPLOAD,pinata,client,mcp,prompt) {
 
      try {
 
+        let db = client.db("ihub_db");
+        let coll = db.collection("ihub_col");
 
-        const db = client.db("ihub_db");
-        const coll = db.collection("ihub_col");
+        if (mcp ==true){
 
-        let uploads=[]
+            db = client.db("ihub_db");
+            coll = db.collection("mcp_registry");
+
+        }
+        else if(prompt ==true){
+            db = client.db("ihub_db");
+            coll = db.collection("prompt_comp");
+        }
+
+        
+
+        //let uploads=[]
         const absolutePath = path.resolve(FOLDER_TO_UPLOAD);
         let files=dirtoFileArray(absolutePath)
 
+/*
         for (let file of files) {
 
             const upload=await pinata.upload.public.file(file)
             uploads.push(upload)
         }
+*/
+        
 
 
+        const limit = pLimit(5); //  5 concurrent uploads
+        const uploadPromises = files.map(file =>
+          limit(() => pinata.upload.public.file(file))
+        );
+
+        const uploads = await Promise.all(uploadPromises);
         console.log(uploads)
         const data = fs.readFileSync(FILE_TO_STORE_LOGIN, 'utf8');
         const lastpath = path.basename(absolutePath);
@@ -442,7 +456,8 @@ async function Push(FOLDER_TO_UPLOAD,pinata,client) {
 
         let docalreadyexists=await manifestExists(data,lastpath,client)
         if (docalreadyexists){
-             await deleteManifest(data,lastpath,client)
+             //await deleteManifest(data,lastpath,client,mcp,prompt)
+             await deactivateOlderVersions(data,lastpath,mcp,prompt)
         }
 
         await coll.findOneAndUpdate(
@@ -461,6 +476,116 @@ async function Push(FOLDER_TO_UPLOAD,pinata,client) {
 }
 
 
+
+
+
+async function UpdateRepo(cid,pinata) {
+  
+  
+    const result = await pinata.gateways.public.get(cid)
+    const Data = result.data;
+    console.log(Data)
+    const arrayBuffer = await Data.arrayBuffer()
+    const buffer = Buffer.from(arrayBuffer);
+    console.log(buffer)
+    deleteFilesWithExtension(".history.bundle",".")
+    let dynamicstring=crypto.randomUUID()
+    let shortID = dynamicstring.substring(0, 5)
+    let bpath=`${shortID}.history.bundle`
+
+    fs.writeFileSync(`${bpath}`,buffer);
+
+    //const absolutePath  = path.resolve(folder);
+    const absoluteBundlePath = path.resolve(bpath);
+
+    execSync(`git fetch  ${absoluteBundlePath} refs/heads/*:refs/remotes/bundle/*`, {
+      cwd: `.`,
+      stdio: 'inherit'
+    });
+
+    const currentBranch = execSync(
+          `git branch --show-current`,
+      {
+        cwd: '.',
+        encoding: 'utf8',
+        shell: true
+      }
+      ).trim();
+
+  const bundleBranch = `bundle/${currentBranch}`;
+
+  console.log(`🔀 Merging ${bundleBranch} → ${currentBranch}`);
+  execSync(
+    `git merge ${bundleBranch} --allow-unrelated-histories --no-edit`,
+    {
+      cwd: '.',
+      stdio: 'inherit',
+      shell: true
+    }
+  );
+
+    console.log("pulled successfully")
+
+  }
+
+
+
+async function Pull(folder,pinata,client,mcp,prompt){
+
+    
+     let db = client.db("ihub_db");
+     let coll = db.collection("ihub_col");
+
+      if (mcp == true){
+
+            db = client.db("ihub_db");
+            coll = db.collection("mcp_registry");
+
+      }
+      else if(prompt == true){
+            db = client.db("ihub_db");
+            coll = db.collection("prompt_comp");
+      }
+
+
+    const targetManifestId= fs.readFileSync(FILE_TO_STORE_LOGIN,'utf8');
+    const doc = await coll.findOne({
+          "owner": "system",
+    });
+    if(doc) {
+
+        let uploads=null
+        let bundle=null
+        let manifests=doc.manifests
+    
+
+    for(let obj of  manifests){
+        
+        let dbfolder=String(obj.folder)
+
+          if(obj.id==targetManifestId && dbfolder==folder){
+              console.log(obj.folder)
+              uploads=obj.uploads
+           }
+
+    
+
+        }
+        console.log(uploads)
+  
+    for(let obj of uploads){
+
+        let name=obj.name
+        const isIncluded = name.includes(".history.bundle");
+        if(isIncluded) {
+
+                bundle=obj.cid
+
+          }}
+       
+          await UpdateRepo(bundle,pinata)
+    
+    }}
 
 
 
@@ -492,7 +617,23 @@ yargs(hideBin(process.argv))
             return yargs.positional('folderpath', {
                 describe: 'The local folder to push',
                 type: 'string'
+            })
+            .option('mcp', { 
+                
+                alias: 'm',
+                type: 'boolean',
+                description: 'mcp server repo or not',
+                default: false
+            })
+             .option('prompt', { 
+                
+                alias: 'p',
+                type: 'boolean',
+                description: 'mcp server repo or not',
+                default: false
             });
+
+             
           },
           async (argv) => {
 
@@ -501,7 +642,7 @@ yargs(hideBin(process.argv))
 
               console.log(`\n⬆️ Starting PUSH operation on folder: ${argv.folderpath}`);
               gitBundler(argv.folderpath);
-              await Push(argv.folderpath,pinata,client);
+              await Push(argv.folderpath,pinata,client,argv.mcp,argv.prompt);
               console.log('Push operation finished.');
 
             }catch(e){
@@ -520,6 +661,20 @@ yargs(hideBin(process.argv))
             return yargs.positional('foldername', {
                 describe: 'the repo/folder to pull',
                 type: 'string'
+            })
+             .option('mcp', { 
+                
+                alias: 'm',
+                type: 'boolean',
+                description: 'mcp server repo or not',
+                default: false
+            })
+             .option('prompt', { 
+                
+                alias: 'p',
+                type: 'boolean',
+                description: 'mcp server repo or not',
+                default: false
             });
           },
           async (argv) => {
@@ -549,7 +704,22 @@ yargs(hideBin(process.argv))
                 describe: 'The folder to clone',
                 type: 'string'
               })
+               .option('mcp', { 
+                
+                alias: 'm',
+                type: 'boolean',
+                description: 'mcp server repo or not',
+                default: false
+            })
+             .option('prompt', { 
+                
+                alias: 'p',
+                type: 'boolean',
+                description: 'mcp server repo or not',
+                default: false
+            })
               .option('new', { 
+
                 alias: 'n',
                 type: 'boolean',
                 description: 'new repo or existing repo',
@@ -566,7 +736,8 @@ yargs(hideBin(process.argv))
             
                 } 
               else {
-                await Clone(argv.foldername,pinata,client);
+
+                await Clone(argv.foldername,pinata,client,argv.mcp,argv.prompt);
                 console.log('Clone operation finished.');
 
               } 
@@ -590,7 +761,7 @@ yargs(hideBin(process.argv))
   .example('ihub op push ./repo', 'Push a local repository')
   .example('ihub op clone <reponame> --new true', 'Clone a new repository | name will be the reponame in UI')
   .example('ihub op clone <reponame>', 'Clone an existing repository | name will be the reponame in UI')
-  .example('ihub op  pull <reponame>', 'Pul updates in an existing repository | name will be the reponame in UI')
+  .example('ihub op pull <reponame>', 'Pull updates in an existing repository | name will be the reponame in UI')
   .epilog('ImmutableHub CLI • Built with ❤️')
   .help()
   .argv;
